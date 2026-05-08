@@ -1,11 +1,11 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect } from "react";
 
 const LEVELS = [
-  { minDay: 1, maxDay: 3, label: "Starter", color: "text-gray-500" },
-  { minDay: 4, maxDay: 7, label: "Consistent", color: "text-brand-lime" },
-  { minDay: 8, maxDay: 14, label: "Disciplined", color: "text-brand-green" },
-  { minDay: 15, maxDay: 30, label: "Elite", color: "text-brand-gold" },
-  { minDay: 31, maxDay: Infinity, label: "Unstoppable", color: "text-brand-orange" },
+  { minDay: 1, maxDay: 3, label: "Starter" },
+  { minDay: 4, maxDay: 7, label: "Consistent" },
+  { minDay: 8, maxDay: 14, label: "Disciplined" },
+  { minDay: 15, maxDay: 30, label: "Elite" },
+  { minDay: 31, maxDay: Infinity, label: "Unstoppable" },
 ];
 
 const REWARDS = [
@@ -38,10 +38,9 @@ function getPlanForDay(day) {
 }
 
 function getTodayEvent(day) {
-  // Trigger events on specific day patterns to prevent boredom
-  if (day % 7 === 3) return EVENTS[2]; // double points every week on day 3
-  if (day % 10 === 0) return EVENTS[0]; // mystery day every 10 days
-  if (day % 14 === 6) return EVENTS[1]; // no choice day bi-weekly
+  if (day % 7 === 3) return EVENTS[2];
+  if (day % 10 === 0) return EVENTS[0];
+  if (day % 14 === 6) return EVENTS[1];
   return null;
 }
 
@@ -50,117 +49,98 @@ const INITIAL_STATE = {
   currentStreak: 6,
   bestStreak: 6,
   points: 140,
-  lastActiveDay: 6,
   mealConfirmedToday: false,
   saveTokens: 1,
   redeemedRewards: [],
-  streakState: "active", // "active" | "at_risk" | "missed"
-  weeksCompleted: 0,
+  streakState: "active",
   totalMealsCompleted: 10,
   totalMealsMissed: 2,
   weeklyMeals: [true, true, false, true, true, false, true],
 };
 
-// Singleton state (in-memory for demo; no persistence needed for prototype)
 let globalState = { ...INITIAL_STATE };
-let listeners = [];
+let listeners = new Set();
 
-function notify() {
-  listeners.forEach((l) => l({ ...globalState }));
+function setState(updater) {
+  globalState = typeof updater === "function" ? updater(globalState) : updater;
+  listeners.forEach((cb) => cb({ ...globalState }));
 }
 
 export function useGameStore() {
-  const [state, setState] = useState({ ...globalState });
+  const [state, setLocalState] = useState({ ...globalState });
 
-  const subscribe = useCallback(() => {
-    listeners.push(setState);
-    return () => {
-      listeners = listeners.filter((l) => l !== setState);
-    };
+  useEffect(() => {
+    listeners.add(setLocalState);
+    return () => listeners.delete(setLocalState);
   }, []);
 
-  // Subscribe on first render
-  useState(() => {
-    const unsub = subscribe();
-    return unsub;
-  });
-
-  const confirmMeal = useCallback(() => {
+  function confirmMeal() {
     if (globalState.mealConfirmedToday) return;
     const isDouble = getTodayEvent(globalState.currentDay)?.type === "double";
     const pointsEarned = isDouble ? 20 : 10;
-    globalState = {
-      ...globalState,
+    setState((s) => ({
+      ...s,
       mealConfirmedToday: true,
-      points: globalState.points + pointsEarned,
-      currentStreak: globalState.currentStreak + 1,
-      bestStreak: Math.max(globalState.bestStreak, globalState.currentStreak + 1),
-      totalMealsCompleted: globalState.totalMealsCompleted + 1,
-      currentDay: globalState.currentDay + 1,
+      points: s.points + pointsEarned,
+      currentStreak: s.currentStreak + 1,
+      bestStreak: Math.max(s.bestStreak, s.currentStreak + 1),
+      totalMealsCompleted: s.totalMealsCompleted + 1,
+      currentDay: s.currentDay + 1,
       streakState: "active",
-    };
-    notify();
-  }, []);
+    }));
+  }
 
-  const redeemReward = useCallback((rewardId) => {
+  function redeemReward(rewardId) {
     const reward = REWARDS.find((r) => r.id === rewardId);
     if (!reward || globalState.points < reward.points) return false;
     if (globalState.redeemedRewards.includes(rewardId)) return false;
-    globalState = {
-      ...globalState,
-      points: globalState.points - reward.points,
-      redeemedRewards: [...globalState.redeemedRewards, rewardId],
-    };
-    notify();
+    setState((s) => ({
+      ...s,
+      points: s.points - reward.points,
+      redeemedRewards: [...s.redeemedRewards, rewardId],
+    }));
     return true;
-  }, []);
+  }
 
-  const useSaveToken = useCallback(() => {
+  function useSaveToken() {
     if (globalState.saveTokens < 1) return false;
-    globalState = {
-      ...globalState,
-      saveTokens: globalState.saveTokens - 1,
-      streakState: "active",
-      currentStreak: globalState.currentStreak,
-    };
-    notify();
+    setState((s) => ({ ...s, saveTokens: s.saveTokens - 1, streakState: "active" }));
     return true;
-  }, []);
+  }
 
-  const restartStreak = useCallback(() => {
-    globalState = {
-      ...globalState,
+  function restartStreak() {
+    setState((s) => ({
+      ...s,
       currentStreak: 0,
       currentDay: 1,
       streakState: "active",
       mealConfirmedToday: false,
-    };
-    notify();
-  }, []);
+    }));
+  }
 
-  const simulateMissedDay = useCallback(() => {
-    globalState = { ...globalState, streakState: "missed" };
-    notify();
-  }, []);
+  function simulateMissedDay() {
+    setState((s) => ({ ...s, streakState: "missed" }));
+  }
 
-  const simulateAtRisk = useCallback(() => {
-    globalState = { ...globalState, streakState: "at_risk" };
-    notify();
-  }, []);
+  function simulateAtRisk() {
+    setState((s) => ({ ...s, streakState: "at_risk" }));
+  }
 
-  const resetDemo = useCallback(() => {
-    globalState = { ...INITIAL_STATE };
-    notify();
-  }, []);
+  function resetDemo() {
+    setState({ ...INITIAL_STATE });
+  }
 
   const level = getLevel(state.currentDay);
   const todayPlan = getPlanForDay(state.currentDay);
   const todayEvent = getTodayEvent(state.currentDay);
   const proUnlocked = state.currentStreak >= 7;
   const secretUnlocked = state.currentStreak >= 21;
-  const nextStreakReward = state.currentStreak < 7 ? { days: 7, label: "Pro Bowl", points: 100 }
-    : state.currentStreak < 21 ? { days: 21, label: "Secret Menu", points: 200 }
-    : { days: 30, label: "Unstoppable Badge", points: 500 };
+  const nextStreakReward =
+    state.currentStreak < 7
+      ? { days: 7, label: "Pro Bowl", points: 100 }
+      : state.currentStreak < 21
+      ? { days: 21, label: "Secret Menu", points: 200 }
+      : { days: 30, label: "Unstoppable Badge", points: 500 };
 
   return {
     ...state,
